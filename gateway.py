@@ -23,6 +23,33 @@ if BASE_DIR not in sys.path:
 
 from shared import api as wangp_api
 
+# ═══════════════════════════ SageAttention SM89 Patch ═══════════════════════════
+
+try:
+    import shared.sage2_core as sage2_core
+    if hasattr(sage2_core, "sageattn") and not getattr(sage2_core, "SM89_ENABLED", False):
+        _orig_sageattn = sage2_core.sageattn
+        def _patched_sageattn(qkv_list, tensor_layout="HND", is_causal=False, sm_scale=None, return_lse=False, recycle_q=False, **kwargs):
+            try:
+                arch = sage2_core._get_cuda_arch(qkv_list[0].device)
+                if arch == "sm89" and not sage2_core.SM89_ENABLED:
+                    return sage2_core.sageattn_qk_int8_pv_fp16_triton(
+                        qkv_list,
+                        tensor_layout=tensor_layout,
+                        is_causal=is_causal,
+                        sm_scale=sm_scale,
+                        return_lse=return_lse,
+                        **kwargs
+                    )
+            except Exception as e:
+                print(f"[Gateway Patch Warning] Fallback failed: {e}")
+            return _orig_sageattn(qkv_list, tensor_layout=tensor_layout, is_causal=is_causal, sm_scale=sm_scale, return_lse=return_lse, recycle_q=recycle_q, **kwargs)
+        sage2_core.sageattn = _patched_sageattn
+        print("[Gateway Patch] Applied in-memory SM89 Triton fallback patch to SageAttention.")
+except Exception as e:
+    print(f"[Gateway Patch] Failed to apply patch: {e}")
+
+
 # ═══════════════════════════ Config ═══════════════════════════
 
 SECRET_TOKEN = os.environ.get("GATEWAY_TOKEN", "my_super_secret_cookcalai_token_999")
