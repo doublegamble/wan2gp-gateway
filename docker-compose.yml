@@ -1,11 +1,8 @@
-version: '3.8'
-
 services:
   wan2gp-gateway:
     build:
       context: ..
-      dockerfile: gateway/Dockerfile
-    image: deepbeepmeep/wan2gp-gateway:latest
+      dockerfile: Dockerfile
     container_name: wan2gp-gateway
     restart: unless-stopped
     ports:
@@ -21,9 +18,4 @@ services:
               count: all
               capabilities: [gpu]
     volumes:
-      - ../models:/workspace/models
-      - ../defaults:/workspace/defaults
-      - ../finetunes:/workspace/finetunes
-      - ../outputs:/workspace/outputs
-      - ../loras:/workspace/loras
-      - ./gateway_config.json:/workspace/gateway/gateway_config.json
+      - ..:/workspace
