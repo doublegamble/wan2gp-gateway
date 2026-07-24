@@ -22,20 +22,23 @@ def get_local_ip():
 
 def get_node_info():
     local_ip = get_local_ip()
+    hostname = socket.gethostname()
     api_port = os.getenv("GATEWAY_PORT", "50080")
     base_url = os.getenv("WAN2GP_BASE_URL", f"http://{local_ip}:{api_port}")
     ip_slug = local_ip.replace('.', '_')
     
     return {
         "id": f"app_gateway_image_{ip_slug}",
-        "name": f"app gateway (Wan2GP 生圖 @ {local_ip})",
+        "name": f"app gateway (Wan2GP 生圖 @ {hostname})",
         "type": "image",
         "service_source": "app_gateway",
+        "hostname": hostname,
         "base_url": base_url,
         "health_endpoint": "/health",
         "priority": 1,
         "metadata": {
             "provider": "Wan2GP Gateway",
+            "hostname": hostname,
             "capabilities": ["image_generation", "sd", "flux"]
         }
     }
