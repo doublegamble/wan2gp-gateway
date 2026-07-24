@@ -68,6 +68,23 @@ def register_to_fb_vba(register_url):
     except Exception as e:
         print(f"[Wan2GP Discovery] Registration failed ({register_url}): {e}", flush=True)
 
+def send_startup_announcement(sock):
+    """啟動時主動對區網發送 UDP 上線宣告報文，告知 FB-VBA 有新節點加入"""
+    try:
+        node_info = get_node_info()
+        payload = json.dumps({
+            "action": "register",
+            **node_info
+        }).encode('utf-8')
+        sock.sendto(payload, ('255.255.255.255', UDP_PORT))
+        local_ip = get_local_ip()
+        if local_ip.startswith('192.168.') or local_ip.startswith('10.'):
+            subnet_bc = local_ip.rsplit('.', 1)[0] + '.255'
+            sock.sendto(payload, (subnet_bc, UDP_PORT))
+        print(f"[Wan2GP Discovery] Sent active startup registration broadcast to LAN", flush=True)
+    except Exception as e:
+        print(f"[Wan2GP Discovery] Failed to send active startup broadcast: {e}", flush=True)
+
 def listen_fb_vba_broadcast():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -79,6 +96,7 @@ def listen_fb_vba_broadcast():
     try:
         sock.bind(('', UDP_PORT))
         print(f"[Wan2GP Discovery] UDP broadcast listener started on port {UDP_PORT}", flush=True)
+        send_startup_announcement(sock)
     except Exception as e:
         print(f"[Wan2GP Discovery] Failed to bind UDP port {UDP_PORT}: {e}", flush=True)
         return
