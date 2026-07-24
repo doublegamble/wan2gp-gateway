@@ -255,6 +255,11 @@ async def lifespan(app):
     global session
     print("Initializing Wan2GP engine...")
     session = wangp_api.init(output_dir=OUTPUT_DIR)
+    try:
+        from discovery import start_discovery_listener
+        start_discovery_listener()
+    except Exception as e:
+        print(f"Warning: failed to start discovery listener: {e}")
     print("Engine ready!")
     yield
     _cleanup_gpu()
@@ -269,6 +274,10 @@ def _signal_handler(signum, frame):
 # ═══════════════════════════ FastAPI App ═══════════════════════════
 
 app = FastAPI(title="API", docs_url=None, redoc_url=None, lifespan=lifespan)
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "service": "app_gateway"}
 
 # ═══════════════════════════ Auth Middleware ═══════════════════════════
 
