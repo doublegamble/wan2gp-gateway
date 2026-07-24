@@ -9,6 +9,7 @@ import requests
 import mimetypes
 import hashlib
 import secrets
+from urllib.parse import quote, unquote
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Request, Response, Cookie, Query
 from fastapi.responses import PlainTextResponse, JSONResponse, HTMLResponse, RedirectResponse
@@ -160,6 +161,40 @@ def get_available_models():
             except Exception:
                 continue
     return models
+
+def resolve_model_id(requested_model: str | None) -> str:
+    """Resolve a requested model ID or Name to a valid internal model_id, falling back to config default."""
+    cfg = load_gateway_config()
+    default_model = cfg.get("model_type", "flux2_klein_9b")
+    if not requested_model or not str(requested_model).strip():
+        return default_model
+
+    req = str(requested_model).strip()
+    available = get_available_models()
+    
+    # 1. Exact match on model ID
+    for m in available:
+        if m["id"] == req:
+            return m["id"]
+            
+    # 2. Exact match on model Name
+    for m in available:
+        if m["name"] == req:
+            return m["id"]
+
+    # 3. Case-insensitive match on model ID or Name
+    req_lower = req.lower()
+    for m in available:
+        if m["id"].lower() == req_lower or m["name"].lower() == req_lower:
+            return m["id"]
+
+    # 4. Partial match
+    for m in available:
+        if req_lower in m["id"].lower() or req_lower in m["name"].lower() or m["id"].lower() in req_lower:
+            return m["id"]
+
+    print(f"[Model Resolver] Unknown model '{requested_model}', falling back to default '{default_model}'")
+    return default_model
 
 RESOLUTION_PRESETS = [
     {"group": "1080p", "options": [
@@ -346,6 +381,15 @@ SETTINGS_HTML = """<!DOCTYPE html>
     transition: border-color 0.2s;
   }
   .card:hover { border-color: #3a3a52; }
+  .card-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  .card-header-row .card-title {
+    margin-bottom: 0;
+  }
   .card-title {
     font-size: 13px;
     font-weight: 600;
@@ -353,6 +397,35 @@ SETTINGS_HTML = """<!DOCTYPE html>
     letter-spacing: 1.2px;
     color: var(--text-muted);
     margin-bottom: 16px;
+  }
+
+  .btn-icon {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-dim);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+  }
+  .btn-icon:hover {
+    border-color: var(--accent);
+    color: var(--text);
+    background: var(--bg-hover);
+  }
+  .btn-icon.spinning .spin-icon {
+    display: inline-block;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
   }
 
   /* Form */
@@ -682,7 +755,12 @@ SETTINGS_HTML = """<!DOCTYPE html>
 
   <!-- Model Selection -->
   <div class="card">
-    <div class="card-title">Model</div>
+    <div class="card-header-row">
+      <div class="card-title">Model</div>
+      <button type="button" class="btn-icon" id="btnRefreshModels" onclick="refreshModels()" title="重新掃描並更新模型清單">
+        <span class="spin-icon">🔄</span> 更新模型清單
+      </button>
+    </div>
     <div class="form-group">
       <div class="model-search">
         <input type="text" id="modelSearch" placeholder="Search models..." autocomplete="off">
@@ -819,6 +897,43 @@ function showModelInfo(opt) {
     info.classList.add('visible');
   } else {
     info.classList.remove('visible');
+  }
+}
+
+async function refreshModels() {
+  const btn = document.getElementById('btnRefreshModels');
+  if (btn) btn.classList.add('spinning');
+
+  try {
+    const sel = document.getElementById('modelSelect');
+    const selectedValue = sel ? sel.value : null;
+
+    const modelsRes = await fetch('/api/settings/models');
+    allModels = await modelsRes.json();
+    renderModels(allModels);
+
+    if (selectedValue && sel) {
+      sel.value = selectedValue;
+      if (sel.selectedIndex !== -1) {
+        showModelInfo(sel.options[sel.selectedIndex]);
+      }
+    }
+
+    const searchInput = document.getElementById('modelSearch');
+    if (searchInput && searchInput.value) {
+      const q = searchInput.value.toLowerCase();
+      const filtered = allModels.filter(m =>
+        m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)
+      );
+      renderModels(filtered);
+      if (selectedValue && sel) sel.value = selectedValue;
+    }
+
+    showToast('模型清單已成功更新！', 'success');
+  } catch (err) {
+    showToast('更新模型清單失敗：' + err.message, 'error');
+  } finally {
+    if (btn) btn.classList.remove('spinning');
   }
 }
 
@@ -1031,7 +1146,9 @@ async function runTest() {
       const img = document.getElementById('testImage');
       // Add cache-buster to force reload
       img.src = data.image_url + '?t=' + Date.now();
-      document.getElementById('testDownload').href = data.image_url;
+      const dl = document.getElementById('testDownload');
+      dl.href = data.image_url;
+      if (data.filename) dl.download = data.filename;
       const elapsed = ((Date.now() - testStartTime) / 1000).toFixed(1);
       document.getElementById('testMeta').textContent =
         `${data.model_type} | ${data.resolution} | ${data.steps} steps | ${elapsed}s`;
@@ -1235,7 +1352,7 @@ async def test_generate(request: Request, body: dict):
     negative_prompt = body.get("negative_prompt", "").strip()
     
     cfg = load_gateway_config()
-    model_type = body.get("model_type") or cfg.get("model_type", "flux2_klein_9b")
+    model_type = resolve_model_id(body.get("model_type"))
     resolution = body.get("resolution") or cfg.get("resolution", "1024x1024")
     steps = body.get("steps") if body.get("steps") is not None else cfg.get("steps", 4)
     seed = body.get("seed") if body.get("seed") is not None else cfg.get("seed", -1)
@@ -1267,10 +1384,12 @@ async def test_generate(request: Request, body: dict):
         if result.success and result.generated_files:
             file_path = result.generated_files[0]
             filename = os.path.basename(file_path)
+            quoted_filename = quote(filename)
             print(f"[Test] Generated: {file_path}")
             return {
                 "success": True,
-                "image_url": f"/outputs/{filename}",
+                "image_url": f"/outputs/{quoted_filename}",
+                "filename": filename,
                 "file_path": file_path,
                 "model_type": model_type,
                 "resolution": resolution,
@@ -1293,21 +1412,133 @@ async def test_generate(request: Request, body: dict):
 from fastapi.responses import FileResponse
 
 @app.get("/outputs/{filename}")
-async def serve_output(filename: str, request: Request):
-    if not _verify_token_from_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    safe_name = os.path.basename(filename)  # prevent path traversal
+async def serve_output(filename: str):
+    raw_name = unquote(filename)
+    safe_name = os.path.basename(raw_name)  # prevent path traversal
     file_path = os.path.join(OUTPUT_DIR, safe_name)
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(file_path)
+    
+    encoded_filename = quote(safe_name)
+    headers = {
+        "Content-Disposition": f"inline; filename*=UTF-8''{encoded_filename}"
+    }
+    return FileResponse(file_path, headers=headers)
+
+# ═══════════════════════════ OpenAI Compatible API ═══════════════════════════
+
+@app.get("/v1/models")
+@app.get("/models")
+async def openai_list_models():
+    models = get_available_models()
+    data = []
+    for m in models:
+        data.append({
+            "id": m["id"],
+            "name": m["name"],
+            "object": "model",
+            "created": 1700000000,
+            "owned_by": "wan2gp",
+        })
+    return {"object": "list", "data": data}
+
+class OpenAIImageGenerationRequest(BaseModel):
+    prompt: str = Field(..., description="Prompt text for image generation")
+    model: str | None = Field(default=None, description="Model ID")
+    n: int | None = Field(default=1, description="Number of images to generate")
+    size: str | None = Field(default=None, description="Size e.g. '1024x1024'")
+    response_format: str | None = Field(default="url", description="Response format: 'url' or 'b64_json'")
+    user: str | None = Field(default=None, description="Optional user identifier")
+
+async def _handle_openai_images_generations(request: Request, body: OpenAIImageGenerationRequest):
+    if not _verify_token_from_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized - Invalid API Token")
+
+    prompt = body.prompt.strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt is required")
+
+    cfg = load_gateway_config()
+    model_type = resolve_model_id(body.model)
+    resolution = body.size or cfg.get("resolution", "1024x1024")
+    steps = cfg.get("steps", 4)
+    seed = cfg.get("seed", -1)
+    if seed == -1:
+        seed = int(time.time())
+    guidance_scale = cfg.get("guidance_scale", 3.5)
+
+    task_settings = {
+        "prompt": prompt,
+        "negative_prompt": cfg.get("negative_prompt", ""),
+        "model_type": model_type,
+        "seed": seed,
+        "resolution": resolution,
+        "num_inference_steps": steps,
+        "guidance_scale": guidance_scale,
+        "num_images": body.n or 1,
+        "image_mode": 1,  # Output image mode
+    }
+
+    print(f"[OpenAI API] Generating image: {prompt[:60]}... ({resolution}, model={model_type})")
+
+    try:
+        import asyncio
+        import base64
+
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: session.run_task(task_settings)
+        )
+
+        if result.success and result.generated_files:
+            host_header = request.headers.get("host") or "localhost:58080"
+            scheme = request.url.scheme or "http"
+            
+            data_items = []
+            for file_path in result.generated_files:
+                filename = os.path.basename(file_path)
+                quoted_filename = quote(filename)
+                image_url = f"{scheme}://{host_header}/outputs/{quoted_filename}?token={SECRET_TOKEN}"
+                
+                if body.response_format == "url":
+                    item = {"url": image_url}
+                else:
+                    item = {}
+                    try:
+                        with open(file_path, "rb") as image_file:
+                            item["b64_json"] = base64.b64encode(image_file.read()).decode("utf-8")
+                    except Exception as b64_err:
+                        print(f"Warning: b64encode failed: {b64_err}")
+                        item["url"] = image_url
+
+                data_items.append(item)
+
+            return {
+                "created": int(time.time()),
+                "data": data_items
+            }
+        else:
+            errors = [str(e) for e in (result.errors or [])]
+            raise HTTPException(
+                status_code=500,
+                detail=f"Image generation failed: {'; '.join(errors)}"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[OpenAI API] Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/v1/images/generations")
+@app.post("/images/generations")
+async def openai_images_generations(request: Request, body: OpenAIImageGenerationRequest):
+    return await _handle_openai_images_generations(request, body)
 
 # ═══════════════════════════ Generation (Async + Webhook) ═══════════════════════════
 
 def process_and_webhook(req: GenerateRequest):
     cfg = load_gateway_config()
     
-    model_type = req.model_type or cfg.get("model_type", "flux2_klein_9b")
+    model_type = resolve_model_id(req.model_type)
     resolution = cfg.get("resolution", "1024x1024")
 
     print(f"Processing task: {req.prompt[:50]}...")
