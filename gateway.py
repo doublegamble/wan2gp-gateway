@@ -75,7 +75,10 @@ def _verify_session(session_id: str | None) -> bool:
     return session_id is not None and session_id in _active_sessions
 
 def _is_localhost(request: Request) -> bool:
-    """Check if request comes from localhost"""
+    """Check if request comes from localhost or docker host interface"""
+    host_header = (request.headers.get("host") or "").split(":")[0]
+    if host_header in ("localhost", "127.0.0.1", "::1"):
+        return True
     client = request.client
     if client is None:
         return False

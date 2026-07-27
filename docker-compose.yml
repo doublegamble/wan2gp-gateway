@@ -2,15 +2,16 @@ services:
   wan2gp-gateway:
     build:
       context: ..
-      dockerfile: wan2gp-gateway/Dockerfile
+      dockerfile: gateway/Dockerfile
     container_name: wan2gp-gateway
     restart: unless-stopped
-    entrypoint: ["bash", "-c", "tr -d '\\r' < /workspace/entrypoint.sh > /tmp/ep.sh && chmod +x /tmp/ep.sh && sed -i 's/python3 wgp.py --listen/python3 wan2gp-gateway\\/gateway.py/' /tmp/ep.sh && bash /tmp/ep.sh"]
+    entrypoint: ["bash", "-c", "pip install -q mmgp==3.7.10 && tr -d '\\r' < /workspace/entrypoint.sh > /tmp/ep.sh && chmod +x /tmp/ep.sh && sed -i 's/python3 wgp.py --listen/python3 gateway\\/gateway.py/' /tmp/ep.sh && bash /tmp/ep.sh"]
     ports:
       - "58080:50080"
     environment:
       - START_GATEWAY=1
       - GATEWAY_TOKEN=${GATEWAY_TOKEN:-my_super_secret_cookcalai_token_999}
+      - HOST_IP=${HOST_IP:-192.168.1.99}
     deploy:
       resources:
         reservations:
