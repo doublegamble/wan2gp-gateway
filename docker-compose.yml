@@ -7,13 +7,13 @@ services:
     restart: unless-stopped
     entrypoint: ["bash", "-c", "tr -d '\\r' < /workspace/entrypoint.sh > /tmp/ep.sh && chmod +x /tmp/ep.sh && sed -i 's/python3 wgp.py --listen/python3 wan2gp-gateway\\/gateway.py/' /tmp/ep.sh && bash /tmp/ep.sh"]
     ports:
-      - "58080:50080"
+      - "58080:58080"
     environment:
       - START_GATEWAY=1
       - GATEWAY_TOKEN=${GATEWAY_TOKEN:-my_super_secret_cookcalai_token_999}
       - HOST_NAME=${HOST_NAME:-AIPEAK-GB}
-      - HOST_IP=${HOST_IP:-192.168.1.103}
-      - WAN2GP_BASE_URL=http://192.168.1.103:58080
+      - HOST_IP=${HOST_IP}
+      - WAN2GP_BASE_URL=${WAN2GP_BASE_URL}
     deploy:
       resources:
         reservations:

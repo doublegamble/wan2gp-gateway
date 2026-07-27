@@ -23,7 +23,7 @@ def get_local_ip():
 def get_node_info():
     local_ip = get_local_ip()
     hostname = os.getenv("HOST_NAME") or os.getenv("COMPUTERNAME") or socket.gethostname()
-    api_port = os.getenv("GATEWAY_PORT", "50080")
+    api_port = os.getenv("GATEWAY_PORT", "58080")
     base_url = os.getenv("WAN2GP_BASE_URL", f"http://{local_ip}:{api_port}")
     ip_slug = local_ip.replace('.', '_')
     
@@ -65,6 +65,11 @@ def register_to_fb_vba(register_url):
                 last_registered[register_url] = now
             else:
                 print(f"[Wan2GP Discovery] Registration response: {res}", flush=True)
+    except urllib.error.HTTPError as e:
+        err_msg = str(e)
+        try: err_msg = e.read().decode('utf-8')
+        except Exception: pass
+        print(f"[Wan2GP Discovery] Registration HTTP Error {e.code} for ({register_url}): {err_msg}", flush=True)
     except Exception as e:
         print(f"[Wan2GP Discovery] Registration failed ({register_url}): {e}", flush=True)
 
@@ -82,6 +87,13 @@ def send_startup_announcement(sock):
             subnet_bc = local_ip.rsplit('.', 1)[0] + '.255'
             sock.sendto(payload, (subnet_bc, UDP_PORT))
         print(f"[Wan2GP Discovery] Sent active startup registration broadcast to LAN", flush=True)
+
+        # Proactively register to FB-VBA default HTTP endpoints
+        probe_url = f"http://{local_ip}:3333/api/ai-nodes/register"
+        try:
+            register_to_fb_vba(probe_url)
+        except Exception:
+            pass
     except Exception as e:
         print(f"[Wan2GP Discovery] Failed to send active startup broadcast: {e}", flush=True)
 
