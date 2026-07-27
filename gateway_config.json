@@ -1,8 +1,8 @@
 {
-  "model_type": "krea2_turbo",
+  "model_type": "Moody_Pro_Mix",
   "resolution": "1024x1024",
-  "steps": 8,
-  "guidance_scale": 0,
+  "steps": 20,
+  "guidance_scale": 3.5,
   "negative_prompt": "",
   "seed": -1,
   "callback_url": "https://service.cookcalai.com/n8n/webhook/201054d7-d04d-46bd-9b29-9854803bff61"
