@@ -314,6 +314,33 @@ class GenerateRequest(BaseModel):
     other_data: str = Field(default="", description="Extra data for n8n")
     token: str = Field(default="", description="Auth token")
 
+# ═══════════════════════════ Network API ═══════════════════════════
+
+class IPUpdateRequest(BaseModel):
+    ip: str
+
+@app.get("/api/network/status")
+async def get_network_status():
+    import discovery
+    avail = os.getenv("AVAILABLE_IPS", "").split(",")
+    current = discovery.get_local_ip()
+    if current not in avail and current:
+        avail.append(current)
+    avail = [ip.strip() for ip in avail if ip.strip()]
+    return {
+        "current_ip": current,
+        "available_ips": list(set(avail)),
+        "is_managed_by_hub": discovery.is_managed_by_hub
+    }
+
+@app.post("/api/network/ip")
+async def set_network_ip(req: IPUpdateRequest):
+    import discovery
+    if discovery.is_managed_by_hub:
+        return JSONResponse(status_code=403, content={"detail": "Cannot switch IP while managed by Service_LM Hub."})
+    discovery.set_active_ip(req.ip)
+    return {"status": "success", "message": f"Active IP switched to {req.ip}"}
+
 # ═══════════════════════════ Settings UI ═══════════════════════════
 
 SETTINGS_HTML = """<!DOCTYPE html>
@@ -366,7 +393,37 @@ SETTINGS_HTML = """<!DOCTYPE html>
   .header {
     text-align: center;
     margin-bottom: 40px;
+    position: relative;
   }
+  .network-badge {
+    position: absolute;
+    top: 0;
+    right: 0;
+    background: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--accent);
+  }
+  .network-badge select {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    outline: none;
+    width: auto;
+  }
+  .network-badge select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  
   .header h1 {
     font-size: 28px;
     font-weight: 700;
@@ -761,6 +818,12 @@ SETTINGS_HTML = """<!DOCTYPE html>
 
 <div class="container">
   <div class="header">
+    <div class="network-badge" id="networkBadge">
+      <span id="networkStatusIcon">💻</span>
+      <select id="ipSelector" onchange="changeActiveIp(this.value)">
+        <option value="">載入中...</option>
+      </select>
+    </div>
     <h1>Wan2GP Gateway</h1>
     <p>API Settings Dashboard</p>
   </div>
@@ -872,6 +935,67 @@ async function init() {
 
   renderModels(allModels);
   applyConfig(currentConfig);
+  
+  pollNetworkStatus();
+  setInterval(pollNetworkStatus, 3000);
+}
+
+async function pollNetworkStatus() {
+  try {
+    const res = await fetch('/api/network/status');
+    const data = await res.json();
+    const sel = document.getElementById('ipSelector');
+    
+    // Remember current selection if any
+    const currVal = sel.value;
+    sel.innerHTML = '';
+    
+    data.available_ips.forEach(ip => {
+      const opt = document.createElement('option');
+      opt.value = ip;
+      opt.textContent = ip;
+      sel.appendChild(opt);
+    });
+    
+    if (data.current_ip) {
+      sel.value = data.current_ip;
+    }
+    
+    const badge = document.getElementById('networkBadge');
+    const icon = document.getElementById('networkStatusIcon');
+    if (data.is_managed_by_hub) {
+      sel.disabled = true;
+      icon.textContent = '🔒';
+      icon.title = '由 Service_LM 納管中，無法手動切換 IP';
+      badge.style.borderColor = 'rgba(34, 197, 94, 0.4)';
+      badge.style.background = 'rgba(34, 197, 94, 0.1)';
+      badge.style.color = '#22c55e';
+    } else {
+      sel.disabled = false;
+      icon.textContent = '💻';
+      icon.title = '獨立運行模式';
+      badge.style.borderColor = 'rgba(99, 102, 241, 0.3)';
+      badge.style.background = 'rgba(99, 102, 241, 0.1)';
+      badge.style.color = 'var(--accent)';
+    }
+  } catch (err) {
+    console.error('Failed to poll network status', err);
+  }
+}
+
+async function changeActiveIp(newIp) {
+  if (!newIp) return;
+  try {
+    const res = await fetch('/api/network/ip', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip: newIp })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    showToast('IP 切換成功', 'success');
+  } catch (err) {
+    showToast('切換失敗: ' + err.message, 'error');
+  }
 }
 
 function renderModels(models) {

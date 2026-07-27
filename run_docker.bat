@@ -18,7 +18,7 @@ echo [Wan2GP-Gateway] 偵測到的IP 清單: %AVAILABLE_IPS%
 echo.
 
 echo 🚀 Launching Wan2GP Gateway via Docker Compose...
-docker compose up -d --build
+docker compose up -d
 
 echo.
 echo ✅ Gateway container is running!

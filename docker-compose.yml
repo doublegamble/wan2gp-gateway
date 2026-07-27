@@ -12,6 +12,7 @@ services:
       - START_GATEWAY=1
       - GATEWAY_TOKEN=${GATEWAY_TOKEN:-my_super_secret_cookcalai_token_999}
       - HOST_IP=${HOST_IP:-192.168.1.99}
+      - AVAILABLE_IPS=${AVAILABLE_IPS:-}
     deploy:
       resources:
         reservations:

@@ -7,7 +7,14 @@ import os
 
 UDP_PORT = int(os.getenv("UDP_PORT", 53259))
 
+ACTIVE_HOST_IP = os.getenv("HOST_IP")
+is_managed_by_hub = False
+hub_url = None
+
 def get_local_ip():
+    global ACTIVE_HOST_IP
+    if ACTIVE_HOST_IP:
+        return ACTIVE_HOST_IP
     env_ip = os.getenv("HOST_IP")
     if env_ip:
         return env_ip
@@ -19,6 +26,19 @@ def get_local_ip():
         return local_ip
     except Exception:
         return "127.0.0.1"
+
+def set_active_ip(new_ip):
+    global ACTIVE_HOST_IP
+    if not new_ip: return
+    ACTIVE_HOST_IP = new_ip
+    print(f"[Wan2GP Discovery] Active IP switched to {new_ip}. Triggering re-registration.", flush=True)
+    try:
+        temp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        temp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        send_startup_announcement(temp_sock)
+        temp_sock.close()
+    except Exception as e:
+        print(f"[Wan2GP Discovery] Failed to re-register after IP switch: {e}", flush=True)
 
 def get_node_info():
     local_ip = get_local_ip()
@@ -112,12 +132,91 @@ def listen_fb_vba_broadcast():
                     port = parts[2].split(':')[1] if ':' in parts[2] else '3333'
                     reg_url = f"http://{addr[0]}:{port}/api/ai-nodes/register"
                 
-                print(f"[Wan2GP Discovery] Broadcast received from {addr[0]}, registering image node to {reg_url}...", flush=True)
+                global is_managed_by_hub, hub_url
+                if msg.get('is_hub_proxy'):
+                    is_managed_by_hub = True
+                    hub_url = reg_url
+                    print(f"[Wan2GP Discovery] Broadcast from Service_LM Hub ({addr[0]}), registering image node...", flush=True)
+                else:
+                    print(f"[Wan2GP Discovery] Broadcast received from {addr[0]}, registering image node to {reg_url}...", flush=True)
+                    
                 register_to_fb_vba(reg_url)
         except Exception as e:
             time.sleep(1)
 
+def proactive_hub_registration():
+    """主動嘗試向本機的 Service_LM Hub 註冊，以繞過 Docker 廣播隔離"""
+    global is_managed_by_hub, hub_url
+    while True:
+        try:
+            # 嘗試向 Service_LM 預設的 8020 port 註冊
+            local_ip = get_local_ip()
+            test_urls = [
+                f"http://127.0.0.1:8020/api/ai-nodes/register",
+                f"http://{local_ip}:8020/api/ai-nodes/register",
+                f"http://host.docker.internal:8020/api/ai-nodes/register"
+            ]
+            
+            registered = False
+            for url in test_urls:
+                try:
+                    node_info = get_node_info()
+                    data = json.dumps(node_info, ensure_ascii=False).encode('utf-8')
+                    req = urllib.request.Request(
+                        url, data=data, headers={'Content-Type': 'application/json; charset=utf-8'}
+                    )
+                    with urllib.request.urlopen(req, timeout=10) as response:
+                        res = json.loads(response.read().decode('utf-8'))
+                        if res.get('success'):
+                            is_managed_by_hub = True
+                            hub_url = url
+                            register_to_fb_vba(url)
+                            registered = True
+                            
+                            # 向 Hub 查詢它目前使用的實體 IP，並強制同步
+                            try:
+                                hub_ip_url = url.replace("/api/ai-nodes/register", "/api/network/ips")
+                                req_ip = urllib.request.Request(hub_ip_url, headers={'Content-Type': 'application/json'})
+                                with urllib.request.urlopen(req_ip, timeout=2) as ip_resp:
+                                    ip_res = json.loads(ip_resp.read().decode('utf-8'))
+                                    hub_current_ip = ip_res.get('current')
+                                    if hub_current_ip and hub_current_ip != get_local_ip():
+                                        print(f"[Wan2GP Discovery] Syncing IP with Hub: {hub_current_ip}", flush=True)
+                                        set_active_ip(hub_current_ip)
+                            except Exception as e:
+                                print(f"[Wan2GP Discovery] Failed to sync IP with Hub: {e}", flush=True)
+                                
+                            break
+                except Exception as e:
+                    print(f"[Wan2GP Discovery] Error trying {url}: {e}", flush=True)
+            
+            if not registered:
+                is_managed_by_hub = False
+            else:
+                # 如果已經被 Hub 納管，定期（每 10 秒）去 Hub 查詢最新 IP，確保同步切換
+                try:
+                    if hub_url:
+                        hub_ip_url = hub_url.replace("/api/ai-nodes/register", "/api/network/ips")
+                        req_ip = urllib.request.Request(hub_ip_url, headers={'Content-Type': 'application/json'})
+                        with urllib.request.urlopen(req_ip, timeout=5) as ip_resp:
+                            ip_res = json.loads(ip_resp.read().decode('utf-8'))
+                            hub_current_ip = ip_res.get('current')
+                            if hub_current_ip and hub_current_ip != get_local_ip():
+                                print(f"[Wan2GP Discovery] Syncing IP with Hub: {hub_current_ip}", flush=True)
+                                set_active_ip(hub_current_ip)
+                except Exception as e:
+                    print(f"[Wan2GP Discovery] Failed to sync IP with Hub during active poll: {e}", flush=True)
+                    
+        except Exception as e:
+            print(f"[Wan2GP Discovery] Global loop error: {e}", flush=True)
+        time.sleep(10)
+
 def start_discovery_listener():
     thread = threading.Thread(target=listen_fb_vba_broadcast, daemon=True)
     thread.start()
+    
+    # 啟動主動註冊執行緒
+    proactive_thread = threading.Thread(target=proactive_hub_registration, daemon=True)
+    proactive_thread.start()
+    
     return thread
