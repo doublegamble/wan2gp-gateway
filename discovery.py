@@ -95,6 +95,10 @@ def register_to_fb_vba(register_url):
 
 def send_startup_announcement(sock):
     """啟動時主動對區網發送 UDP 上線宣告報文，告知 FB-VBA 有新節點加入"""
+    global is_managed_by_hub
+    if is_managed_by_hub:
+        return
+        
     try:
         node_info = get_node_info()
         payload = json.dumps({
@@ -143,13 +147,16 @@ def listen_fb_vba_broadcast():
             data, addr = sock.recvfrom(2048)
             msg = json.loads(data.decode('utf-8'))
             if isinstance(msg, dict) and msg.get('service') == 'FB-VBA' and 'register_url' in msg:
+                global is_managed_by_hub, hub_url
+                if is_managed_by_hub:
+                    continue # 交給 Hub 處理，這裡不回應
+                    
                 reg_url = msg['register_url']
                 if '172.' in reg_url:
                     parts = reg_url.split('/')
                     port = parts[2].split(':')[1] if ':' in parts[2] else '3333'
                     reg_url = f"http://{addr[0]}:{port}/api/ai-nodes/register"
                 
-                global is_managed_by_hub, hub_url
                 if msg.get('is_hub_proxy'):
                     is_managed_by_hub = True
                     hub_url = reg_url
@@ -166,12 +173,12 @@ def proactive_hub_registration():
     global is_managed_by_hub, hub_url
     while True:
         try:
-            # 嘗試向 Service_LM 預設的 8020 port 註冊
+            # 嘗試向 Service_LM 預設的 8000 port 註冊
             local_ip = get_local_ip()
             test_urls = [
-                f"http://127.0.0.1:8020/api/ai-nodes/register",
-                f"http://{local_ip}:8020/api/ai-nodes/register",
-                f"http://host.docker.internal:8020/api/ai-nodes/register"
+                f"http://127.0.0.1:8000/api/ai-nodes/register",
+                f"http://{local_ip}:8000/api/ai-nodes/register",
+                f"http://host.docker.internal:8000/api/ai-nodes/register"
             ]
             
             registered = False
@@ -187,42 +194,16 @@ def proactive_hub_registration():
                         if res.get('success'):
                             is_managed_by_hub = True
                             hub_url = url
-                            register_to_fb_vba(url)
+                            # 不要再直接向外部總管註冊，交給 Hub 處理
+                            # register_to_fb_vba(url) 
                             registered = True
-                            
-                            # 向 Hub 查詢它目前使用的實體 IP，並強制同步
-                            try:
-                                hub_ip_url = url.replace("/api/ai-nodes/register", "/api/network/ips")
-                                req_ip = urllib.request.Request(hub_ip_url, headers={'Content-Type': 'application/json'})
-                                with urllib.request.urlopen(req_ip, timeout=2) as ip_resp:
-                                    ip_res = json.loads(ip_resp.read().decode('utf-8'))
-                                    hub_current_ip = ip_res.get('current')
-                                    if hub_current_ip and hub_current_ip != get_local_ip():
-                                        print(f"[Wan2GP Discovery] Syncing IP with Hub: {hub_current_ip}", flush=True)
-                                        set_active_ip(hub_current_ip)
-                            except Exception as e:
-                                print(f"[Wan2GP Discovery] Failed to sync IP with Hub: {e}", flush=True)
-                                
+                            print(f"[Wan2GP Discovery] Successfully registered to Hub: {url}", flush=True)
                             break
                 except Exception as e:
                     print(f"[Wan2GP Discovery] Error trying {url}: {e}", flush=True)
             
             if not registered:
                 is_managed_by_hub = False
-            else:
-                # 如果已經被 Hub 納管，定期（每 10 秒）去 Hub 查詢最新 IP，確保同步切換
-                try:
-                    if hub_url:
-                        hub_ip_url = hub_url.replace("/api/ai-nodes/register", "/api/network/ips")
-                        req_ip = urllib.request.Request(hub_ip_url, headers={'Content-Type': 'application/json'})
-                        with urllib.request.urlopen(req_ip, timeout=5) as ip_resp:
-                            ip_res = json.loads(ip_resp.read().decode('utf-8'))
-                            hub_current_ip = ip_res.get('current')
-                            if hub_current_ip and hub_current_ip != get_local_ip():
-                                print(f"[Wan2GP Discovery] Syncing IP with Hub: {hub_current_ip}", flush=True)
-                                set_active_ip(hub_current_ip)
-                except Exception as e:
-                    print(f"[Wan2GP Discovery] Failed to sync IP with Hub during active poll: {e}", flush=True)
                     
         except Exception as e:
             print(f"[Wan2GP Discovery] Global loop error: {e}", flush=True)

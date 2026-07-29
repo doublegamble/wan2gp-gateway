@@ -17,6 +17,11 @@ echo [Wan2GP-Gateway] 選擇的 IP: %HOST_IP%
 echo [Wan2GP-Gateway] 偵測到的IP 清單: %AVAILABLE_IPS%
 echo.
 
+> "%~dp0.env" echo HOST_IP=%HOST_IP%
+>> "%~dp0.env" echo AVAILABLE_IPS=%AVAILABLE_IPS%
+echo [Wan2GP-Gateway] 已將動態 IP 寫入 .env
+echo.
+
 echo 🚀 Launching Wan2GP Gateway via Docker Compose...
 docker compose up -d
 
