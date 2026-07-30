@@ -16,6 +16,7 @@ services:
       - WAN2GP_BASE_URL=${WAN2GP_BASE_URL}
       - AVAILABLE_IPS=${AVAILABLE_IPS:-}
       - EXTERNAL_PORT=58080
+      - TZ=Asia/Taipei
     deploy:
       resources:
         reservations:
