@@ -15,6 +15,7 @@ services:
       - HOST_IP=${HOST_IP}
       - WAN2GP_BASE_URL=${WAN2GP_BASE_URL}
       - AVAILABLE_IPS=${AVAILABLE_IPS:-}
+      - EXTERNAL_PORT=58080
     deploy:
       resources:
         reservations:

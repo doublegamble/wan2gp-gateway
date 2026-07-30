@@ -1594,75 +1594,80 @@ async def _handle_openai_images_generations(request: Request, body: OpenAIImageG
     if not prompt:
         raise HTTPException(status_code=400, detail="Prompt is required")
 
-    cfg = load_gateway_config()
-    model_type = resolve_model_id(body.model)
-    resolution = body.size or cfg.get("resolution", "1024x1024")
-    steps = cfg.get("steps", 4)
-    seed = cfg.get("seed", -1)
-    if seed == -1:
-        seed = int(time.time())
-    guidance_scale = cfg.get("guidance_scale", 3.5)
-
-    task_settings = {
-        "prompt": prompt,
-        "negative_prompt": cfg.get("negative_prompt", ""),
-        "model_type": model_type,
-        "seed": seed,
-        "resolution": resolution,
-        "num_inference_steps": steps,
-        "guidance_scale": guidance_scale,
-        "num_images": body.n or 1,
-        "image_mode": 1,  # Output image mode
-    }
-
-    print(f"[OpenAI API] Generating image: {prompt[:60]}... ({resolution}, model={model_type})")
-
+    import discovery
+    discovery.active_tasks += 1
     try:
-        import asyncio
-        import base64
-
-        result = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: session.run_task(task_settings)
-        )
-
-        if result.success and result.generated_files:
-            host_header = request.headers.get("host") or "localhost:58080"
-            scheme = request.url.scheme or "http"
-            
-            data_items = []
-            for file_path in result.generated_files:
-                filename = os.path.basename(file_path)
-                quoted_filename = quote(filename)
-                image_url = f"{scheme}://{host_header}/outputs/{quoted_filename}?token={SECRET_TOKEN}"
-                
-                if body.response_format == "url":
-                    item = {"url": image_url}
-                else:
-                    item = {}
-                    try:
-                        with open(file_path, "rb") as image_file:
-                            item["b64_json"] = base64.b64encode(image_file.read()).decode("utf-8")
-                    except Exception as b64_err:
-                        print(f"Warning: b64encode failed: {b64_err}")
-                        item["url"] = image_url
-
-                data_items.append(item)
-
-            return {
-                "created": int(time.time()),
-                "data": data_items
-            }
-        else:
-            errors = [str(e) for e in (result.errors or [])]
-            raise HTTPException(
-                status_code=500,
-                detail=f"Image generation failed: {'; '.join(errors)}"
+        cfg = load_gateway_config()
+        model_type = resolve_model_id(body.model)
+        resolution = body.size or cfg.get("resolution", "1024x1024")
+        steps = cfg.get("steps", 4)
+        seed = cfg.get("seed", -1)
+        if seed == -1:
+            seed = int(time.time())
+        guidance_scale = cfg.get("guidance_scale", 3.5)
+    
+        task_settings = {
+            "prompt": prompt,
+            "negative_prompt": cfg.get("negative_prompt", ""),
+            "model_type": model_type,
+            "seed": seed,
+            "resolution": resolution,
+            "num_inference_steps": steps,
+            "guidance_scale": guidance_scale,
+            "num_images": body.n or 1,
+            "image_mode": 1,  # Output image mode
+        }
+    
+        print(f"[OpenAI API] Generating image: {prompt[:60]}... ({resolution}, model={model_type})")
+    
+        try:
+            import asyncio
+            import base64
+    
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: session.run_task(task_settings)
             )
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"[OpenAI API] Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    
+            if result.success and result.generated_files:
+                host_header = request.headers.get("host") or "localhost:58080"
+                scheme = request.url.scheme or "http"
+                
+                data_items = []
+                for file_path in result.generated_files:
+                    filename = os.path.basename(file_path)
+                    quoted_filename = quote(filename)
+                    image_url = f"{scheme}://{host_header}/outputs/{quoted_filename}?token={SECRET_TOKEN}"
+                    
+                    if body.response_format == "url":
+                        item = {"url": image_url}
+                    else:
+                        item = {}
+                        try:
+                            with open(file_path, "rb") as image_file:
+                                item["b64_json"] = base64.b64encode(image_file.read()).decode("utf-8")
+                        except Exception as b64_err:
+                            print(f"Warning: b64encode failed: {b64_err}")
+                            item["url"] = image_url
+    
+                    data_items.append(item)
+    
+                return {
+                    "created": int(time.time()),
+                    "data": data_items
+                }
+            else:
+                errors = [str(e) for e in (result.errors or [])]
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Image generation failed: {'; '.join(errors)}"
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"[OpenAI API] Error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        discovery.active_tasks = max(0, discovery.active_tasks - 1)
 
 @app.post("/v1/images/generations")
 @app.post("/images/generations")
@@ -1672,54 +1677,59 @@ async def openai_images_generations(request: Request, body: OpenAIImageGeneratio
 # ═══════════════════════════ Generation (Async + Webhook) ═══════════════════════════
 
 def process_and_webhook(req: GenerateRequest):
-    cfg = load_gateway_config()
-    
-    model_type = resolve_model_id(req.model_type)
-    resolution = cfg.get("resolution", "1024x1024")
-
-    print(f"Processing task: {req.prompt[:50]}...")
-    
-    task_settings = {
-        "prompt": req.prompt,
-        "negative_prompt": req.negative_prompt if req.negative_prompt is not None else cfg.get("negative_prompt", ""),
-        "model_type": model_type,
-        "seed": (req.seed if req.seed is not None else cfg.get("seed", -1)),
-        "resolution": resolution,
-        "num_inference_steps": req.steps or cfg.get("steps", 4),
-        "guidance_scale": req.guidance_scale if req.guidance_scale is not None else cfg.get("guidance_scale", 3.5),
-        "num_images": 1,
-        "image_mode": 1,  # Output image instead of video
-    }
-    
-    if task_settings["seed"] == -1:
-        task_settings["seed"] = int(time.time())
-    
+    import discovery
+    discovery.active_tasks += 1
     try:
-        result = session.run_task(task_settings)
+        cfg = load_gateway_config()
         
-        if result.success and result.generated_files:
-            file_path = result.generated_files[0]
-            print(f"Generated: {file_path}")
+        model_type = resolve_model_id(req.model_type)
+        resolution = cfg.get("resolution", "1024x1024")
+    
+        print(f"Processing task: {req.prompt[:50]}...")
+        
+        task_settings = {
+            "prompt": req.prompt,
+            "negative_prompt": req.negative_prompt if req.negative_prompt is not None else cfg.get("negative_prompt", ""),
+            "model_type": model_type,
+            "seed": (req.seed if req.seed is not None else cfg.get("seed", -1)),
+            "resolution": resolution,
+            "num_inference_steps": req.steps or cfg.get("steps", 4),
+            "guidance_scale": req.guidance_scale if req.guidance_scale is not None else cfg.get("guidance_scale", 3.5),
+            "num_images": 1,
+            "image_mode": 1,  # Output image instead of video
+        }
+        
+        if task_settings["seed"] == -1:
+            task_settings["seed"] = int(time.time())
+        
+        try:
+            result = session.run_task(task_settings)
             
-            callback = req.callback_url or cfg.get("callback_url", "")
-            if callback:
-                file_name = os.path.basename(file_path)
-                mime_type, _ = mimetypes.guess_type(file_path)
-                mime_type = mime_type or 'application/octet-stream'
-                with open(file_path, 'rb') as f:
-                    file_data = f.read()
+            if result.success and result.generated_files:
+                file_path = result.generated_files[0]
+                print(f"Generated: {file_path}")
                 
-                files = {'image': (file_name, file_data, mime_type)}
-                data = {'other_data': req.other_data}
+                callback = req.callback_url or cfg.get("callback_url", "")
+                if callback:
+                    file_name = os.path.basename(file_path)
+                    mime_type, _ = mimetypes.guess_type(file_path)
+                    mime_type = mime_type or 'application/octet-stream'
+                    with open(file_path, 'rb') as f:
+                        file_data = f.read()
+                    
+                    files = {'image': (file_name, file_data, mime_type)}
+                    data = {'other_data': req.other_data}
+                    
+                    resp = requests.post(callback, files=files, data=data)
+                    print(f"Webhook status: {resp.status_code}")
+                    
+            else:
+                print(f"Generation failed: {result.errors}")
                 
-                resp = requests.post(callback, files=files, data=data)
-                print(f"Webhook status: {resp.status_code}")
-                
-        else:
-            print(f"Generation failed: {result.errors}")
-            
-    except Exception as e:
-        print(f"Error: {e}")
+        except Exception as e:
+            print(f"Error: {e}")
+    finally:
+        discovery.active_tasks = max(0, discovery.active_tasks - 1)
 
 @app.post("/api/generate")
 async def trigger_generation(req: GenerateRequest, background_tasks: BackgroundTasks):
