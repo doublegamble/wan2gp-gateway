@@ -68,7 +68,9 @@ def get_node_info():
     local_ip = get_local_ip()
     hostname = os.getenv("HOST_NAME") or os.getenv("COMPUTERNAME") or socket.gethostname()
     api_port = os.getenv("EXTERNAL_PORT") or os.getenv("GATEWAY_PORT", "58080")
-    base_url = os.getenv("WAN2GP_BASE_URL", f"http://{local_ip}:{api_port}")
+    base_url = os.getenv("WAN2GP_BASE_URL")
+    if not base_url:
+        base_url = f"http://{local_ip}:{api_port}"
     ip_slug = local_ip.replace('.', '_')
     
     return {
