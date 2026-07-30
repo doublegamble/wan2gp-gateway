@@ -15,7 +15,7 @@ set HF_ENDPOINT=
 echo.
 echo ========================================
 echo   Wan2GP Gateway API (Standalone)
-echo   Port: 50080
+echo   Port: 58080
 echo   Press Ctrl+C to stop (frees GPU memory)
 echo ========================================
 echo.

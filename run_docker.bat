@@ -27,7 +27,7 @@ docker compose up -d
 
 echo.
 echo ✅ Gateway container is running!
-echo 📡 Gateway API: http://localhost:50080
-echo ⚙️  Settings UI: http://localhost:50080/
+echo 📡 Gateway API: http://localhost:58080
+echo ⚙️  Settings UI: http://localhost:58080/
 echo.
 pause
