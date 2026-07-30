@@ -40,6 +40,8 @@ def set_active_ip(new_ip):
     except Exception as e:
         print(f"[Wan2GP Discovery] Failed to re-register after IP switch: {e}", flush=True)
 
+active_tasks = 0
+
 def get_node_info():
     local_ip = get_local_ip()
     hostname = os.getenv("HOST_NAME") or os.getenv("COMPUTERNAME") or socket.gethostname()
@@ -56,6 +58,8 @@ def get_node_info():
         "base_url": base_url,
         "health_endpoint": "/health",
         "priority": 1,
+        "active_tasks": active_tasks,
+        "max_concurrency": 1,
         "metadata": {
             "provider": "Wan2GP Gateway",
             "hostname": hostname,
