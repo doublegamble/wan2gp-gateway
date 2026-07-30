@@ -7,7 +7,19 @@ import os
 
 UDP_PORT = int(os.getenv("UDP_PORT", 53259))
 
-ACTIVE_HOST_IP = os.getenv("HOST_IP")
+def _load_saved_ip():
+    try:
+        import os
+        saved_ip_path = os.path.join(os.getenv("WORKSPACE_DIR", "/workspace"), 'saved_ip.txt')
+        if os.path.exists(saved_ip_path):
+            with open(saved_ip_path, 'r', encoding='utf-8') as f:
+                ip = f.read().strip()
+                if ip: return ip
+    except Exception:
+        pass
+    return os.getenv("HOST_IP")
+
+ACTIVE_HOST_IP = _load_saved_ip()
 is_managed_by_hub = False
 hub_url = None
 
@@ -31,6 +43,16 @@ def set_active_ip(new_ip):
     global ACTIVE_HOST_IP
     if not new_ip: return
     ACTIVE_HOST_IP = new_ip
+    
+    try:
+        import os
+        saved_ip_path = os.path.join(os.getenv("WORKSPACE_DIR", "/workspace"), 'saved_ip.txt')
+        with open(saved_ip_path, 'w', encoding='utf-8') as f:
+            f.write(new_ip)
+        print(f"[Network] User preference saved to {saved_ip_path}: {new_ip}")
+    except Exception as e:
+        print(f"[Network] Failed to save IP preference: {e}")
+        
     print(f"[Wan2GP Discovery] Active IP switched to {new_ip}. Triggering re-registration.", flush=True)
     try:
         temp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
